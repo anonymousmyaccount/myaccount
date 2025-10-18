@@ -1,0 +1,138 @@
+clear all;
+close all;
+
+% Load the dataset from an Excel file
+filename = 'bostonhousingdata.xlsx'; % Replace with your Excel file name
+if ~isfile(filename)
+    error('The specified file does not exist.');
+end
+data = readtable(filename);
+
+% Check if data is non-empty
+if isempty(data)
+    error('The dataset is empty.');
+end
+
+% Extract predictor variables (X) and response variable (Y)
+X = data{:, 1:end-1};  % Predictor variables
+Y = data{:, end};      % Response variable
+
+% Parameters for epsilon quantile SVR
+s = 2^50;              % Kernel parameter
+c1 =2^-3;    %2^-4; 2^5           % Regularization parameter
+c3 = 0.25;              % Regularization parameter specific to One-Norm
+C= 2^-8;
+lower_quantiles = [0.025, 0.05, 0.075];
+ sparsity_lower =0;
+ sparsity_upper =0;
+% Kernel parameters
+kerfPara.type = 'rbf';
+kerfPara.pars = s;
+
+% Initialize results cell array for storing results
+results1 = cell(length(lower_quantiles) + 1, 7); % 7 columns
+results1(1,:) = {'Tau', 'RMSE (Lower, Upper)', 'Time', 'Sparsity (Lower, Upper)', 'Coverage Probability (Lower, Upper)', 'PICP', 'MPIW'};
+
+% Function to evaluate PICP and MPIW
+function [PICP, MPIW] = evaluate_PICP(y, Low_Q, Up_Q)
+    PICP = mean(y >= Low_Q & y <= Up_Q);
+    MPIW = mean(Up_Q - Low_Q);
+end
+
+% Number of iterations
+num_iterations = 10;
+
+% Initialize arrays to store metrics across iterations
+P_tau = zeros(num_iterations, length(lower_quantiles));
+RMSE = zeros(num_iterations, length(lower_quantiles));
+spars = zeros(num_iterations, length(lower_quantiles));
+CP_lower = zeros(num_iterations, length(lower_quantiles));
+CP_upper = zeros(num_iterations, length(lower_quantiles));
+PICP = zeros(num_iterations, length(lower_quantiles));
+MPIW = zeros(num_iterations, length(lower_quantiles));
+
+% Split data into training (80%) and testing (20%) sets
+
+
+% Iterate over each quantile
+for i = 1:length(lower_quantiles)
+    tau_lower = lower_quantiles(i);
+    tau_upper = 0.90 + tau_lower;  % Complement of lower quantile
+
+    % Loop for random seeds (rng 1:100)
+    for j = 1:num_iterations
+        rng(j); % Seed the random number generator for reproducibility
+        cv = cvpartition(size(X, 1), 'Holdout', 0.2);
+trainIdx = training(cv);
+testIdx = test(cv);
+
+trainX = X(trainIdx, :);
+ytrain = Y(trainIdx, :);
+testX = X(testIdx, :);
+ytest = Y(testIdx, :);
+        % Predict the lower and upper quantiles using quantileLPONENORMTSVR
+        tic; % Start timer
+        %%
+       [~, Low_Q, sparsity_lower] = quantileLPONENORMTSVR12(trainX, ytrain, testX, s, c3, c1, tau_lower);
+        [~, Up_Q, sparsity_upper] = quantileLPONENORMTSVR12(trainX, ytrain, testX, s, c3, c1, tau_upper);
+
+        % [Low_Q, ~,~,sparsity_lower] = epsilon_quantilesvr2(trainX, ytrain, testX, kerfPara, c1, tau_lower, 0);
+        % [Up_Q, ~,~,sparsity_upper] = epsilon_quantilesvr2(trainX, ytrain, testX, kerfPara, c1, tau_upper, 0);
+
+
+   [PredictY, f1,sparsity] = leastsquaresvr(trainX, ytrain,testX, kerfPara, C);
+   sigma = std(ytest - PredictY);  % The difference between predicted and actual values
+   quantile_values_normal = norminv([tau_lower, tau_upper], 0, sigma);
+    Low_Q = PredictY + quantile_values_normal(1);  % Lower bound
+      Up_Q = PredictY + quantile_values_normal(2);  % Upper bound
+
+
+%para.kernel=2;
+%para.p1=2^2;
+%para.r=0.8;
+%para.eta =0.1; 
+%para.eps1=0.01; %0.0001 
+%para.iter = 5000;
+%para.lambda=0;
+%para.delta=0.07;
+%[w1(:,i),w2(:,i),b1(i),b2(i),error,loss,CI,coverage_confi,m1,m2,m3,m4] = cce_withR_m1(trainX,ytrain,testX,ytest,0.90,para);
+
+
+
+%%
+
+
+        elapsed_time = toc; % End timer
+
+        % Calculate coverage probabilities for lower and upper quantiles
+        CP_lower(j, i) = mean(ytest <= Low_Q);
+        CP_upper(j, i) = mean(ytest <= Up_Q);
+
+        % Evaluate PICP and MPIW using the evaluate_PICP function
+        [PICP(j, i), MPIW(j, i)] = evaluate_PICP(ytest, Low_Q, Up_Q);
+
+        % Calculate RMSE for lower and upper quantiles
+        RMSE(j, i) = sqrt(mean((ytest - Low_Q).^2)); % RMSE for lower quantile
+        RMSE(j, i + length(lower_quantiles)) = sqrt(mean((ytest - Up_Q).^2)); % RMSE for upper quantile
+
+        % Store sparsity for lower and upper quantiles
+        spars(j, i) = sparsity_lower;
+        spars(j, i + length(lower_quantiles)) = sparsity_upper;
+    end
+
+    % Store average results across all iterations in the results cell array
+    results1{i + 1, 1} = ['(', num2str(tau_lower), ', ', num2str(tau_upper), ')'];
+    results1{i + 1, 2} = sprintf('%.4f, %.4f', mean(RMSE(:, i)), mean(RMSE(:, i + length(lower_quantiles)))); % RMSE
+    results1{i + 1, 3} = sprintf('%.4f', mean(elapsed_time)); % Time
+    results1{i + 1, 4} = sprintf('%.4f, %.4f', mean(spars(:, i)), mean(spars(:, i + length(lower_quantiles)))); % Sparsity
+    results1{i + 1, 5} = sprintf('%.4f, %.4f', mean(CP_lower(:, i)), mean(CP_upper(:, i))); % Coverage Probability
+    results1{i + 1, 6} = sprintf('%.4f', mean(PICP(:, i))); % PICP
+    results1{i + 1, 7} = sprintf('%.4f', mean(MPIW(:, i))); % MPIW
+end
+
+% Display results
+disp('Results:');
+disp(results1);
+
+% Save to CSV file
+writetable(cell2table(results1), 'results_PI_onenorm_quantileLPONENORM_boston.csv');

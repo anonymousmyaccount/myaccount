@@ -1,0 +1,3 @@
+def main():
+    global USE_GPU
+    # ... existing code ... 
