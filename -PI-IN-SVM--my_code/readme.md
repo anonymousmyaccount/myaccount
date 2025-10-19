@@ -4,7 +4,7 @@ This repository contains the code and paper for Uncertainty Quantification in SV
 
 ## Structure
 
-- `paper/`: LaTeX source for the paper.
+-`Experiments_artifical_dataset /`: For experiments on artificial datasets. 
 - `src/`: Python source code.
   - `src/models/`: Core model implementations.
   - `src/experiments/`: Scripts to run experiments.
